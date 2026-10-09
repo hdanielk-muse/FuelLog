@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>트럭 연비 기록</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:-apple-system,'Malgun Gothic',sans-serif;background:#1a1a2e;color:#fff;min-height:100vh;padding:14px;max-width:600px;margin:0 auto}
+h1{font-size:24px;text-align:center;margin:10px 0 4px}
+.sub{text-align:center;color:#888;font-size:13px;margin-bottom:14px}
+.avg-card{background:#16213e;border-radius:14px;padding:18px;text-align:center;margin-bottom:14px;border:1px solid #2a2a4e}
+.avg-card .lbl{font-size:13px;color:#888}
+.avg-card .val{font-size:44px;font-weight:800;color:#ffd54f;margin:4px 0}
+.avg-card .unit{font-size:14px;color:#888}
+.form{background:#16213e;border-radius:14px;padding:16px;margin-bottom:14px;border:1px solid #2a2a4e}
+.form h2{font-size:16px;margin-bottom:12px;color:#a5d6a7}
+.row{display:flex;gap:8px;margin-bottom:10px}
+.row .fld{flex:1}
+label{display:block;font-size:12px;color:#888;margin-bottom:4px}
+input,select{width:100%;font-size:18px;padding:12px;border-radius:10px;border:1px solid #2a2a4e;background:#0f0f23;color:#fff}
+.unit-toggle{display:flex;background:#0f0f23;border-radius:10px;overflow:hidden;border:1px solid #2a2a4e}
+.unit-toggle button{flex:1;padding:12px;font-size:16px;font-weight:700;border:none;background:transparent;color:#888;cursor:pointer}
+.unit-toggle button.on{background:#2d5a2d;color:#fff}
+#add-btn{width:100%;padding:16px;font-size:18px;font-weight:800;border:none;border-radius:12px;background:#2d5a2d;color:#fff;cursor:pointer;margin-top:4px}
+#add-btn:active{background:#1e401e}
+#cancel-edit{display:none;width:100%;padding:11px;font-size:15px;font-weight:700;border:1px solid #3a4666;border-radius:10px;background:transparent;color:#c4cbe0;cursor:pointer;margin-top:8px}
+#form-err{display:none;background:#5a1e1e;color:#ffb3b3;font-size:14px;padding:10px 14px;border-radius:10px;margin-top:10px;text-align:center}
+#form-err.ok{background:#173e29;color:#a5e7bd}
+.list h2{font-size:16px;margin:6px 0 10px;color:#a5d6a7}
+.rec{background:#16213e;border-radius:12px;padding:14px;margin-bottom:10px;border:1px solid #2a2a4e;display:flex;align-items:center;gap:10px}
+.rec .info{flex:1}
+.rec .date{font-size:13px;color:#888}
+.rec .detail{font-size:14px;margin-top:2px}
+.rec .mpg{font-size:26px;font-weight:800;color:#ffd54f;min-width:90px;text-align:right}
+.rec .mpg small{font-size:12px;color:#888;font-weight:400}
+.rec-actions{display:flex;align-items:center;gap:2px}
+.edit,.del{background:none;border:none;cursor:pointer;padding:8px;line-height:1}
+.edit{color:#a5d6a7;font-size:16px}
+.del{color:#777;font-size:20px}
+.empty{text-align:center;color:#666;padding:30px;font-size:14px}
+</style>
+</head>
+<body>
+<h1>⛽ 트럭 연비 기록</h1>
+<div class="sub">주유할 때마다 기록하면 MPG 자동 계산</div>
+
+<div class="avg-card">
+<div class="lbl">평균 연비</div>
+<div class="val" id="avg-mpg">–</div>
+<div class="unit">MPG · <span id="rec-count">0</span>회 주유</div>
+</div>
+
+<div class="form">
+<h2>주유 기록 추가</h2>
+<div class="row">
+<div class="fld"><label>날짜</label><input type="date" id="f-date"></div>
+</div>
+<div class="row">
+<div class="fld"><label>주행거리</label><input type="number" id="f-odo" inputmode="decimal" placeholder="예: 125430"></div>
+<div class="fld"><label>거리 단위</label>
+<div class="unit-toggle" id="f-odo-unit">
+<button class="on" data-u="mi">마일</button><button data-u="km">km</button>
+</div></div>
+</div>
+<div class="row">
+<div class="fld"><label>주유량</label><input type="number" id="f-fuel" inputmode="decimal" placeholder="예: 150"></div>
+<div class="fld"><label>단위</label>
+<div class="unit-toggle" id="f-unit">
+<button class="on" data-u="gal">갤런</button><button data-u="L">리터</button>
+</div></div>
+</div>
+<button id="add-btn" type="button">기록 추가</button>
+<button id="cancel-edit" type="button">수정 취소</button>
+<div id="form-err" role="status" aria-live="polite"></div>
+</div>
+
+<div class="list">
+<h2>기록</h2>
+<div id="records"></div>
+</div>
+
+<script>
+const LS_KEY="truck-fuel-log-v1";
+const GAL_PER_LITER=0.264172;
+const KM_PER_MILE=1.60934;
+let unit="gal";
+let odoUnit="mi";
+let editingId=null;
+let records=load();
+
+function validRecords(value){
+const list=Array.isArray(value)?value:(value&&Array.isArray(value.records)?value.records:[]);
+return list.filter(r=>r&&Number.isFinite(Number(r.odo))&&Number.isFinite(Number(r.fuel))).map((r,i)=>({
+...r,
+id:r.id!=null?r.id:`legacy-${i}-${r.date||"record"}`,
+odo:Number(r.odo),fuel:Number(r.fuel),unit:r.unit==="L"?"L":"gal",odoUnit:r.odoUnit==="km"?"km":"mi"
+}));
+}
+function load(){try{const s=localStorage.getItem(LS_KEY);if(s)return validRecords(JSON.parse(s));}catch(e){}return [];}
+function save(){try{localStorage.setItem(LS_KEY,JSON.stringify(records));}catch(e){}}
+
+// 오늘 날짜 기본값
+document.getElementById("f-date").value=new Date().toISOString().slice(0,10);
+
+// 단위 토글
+document.querySelectorAll("#f-unit button").forEach(b=>{
+b.onclick=()=>{document.querySelectorAll("#f-unit button").forEach(x=>x.classList.remove("on"));b.classList.add("on");unit=b.dataset.u;};
+});
+document.querySelectorAll("#f-odo-unit button").forEach(b=>{
+b.onclick=()=>{document.querySelectorAll("#f-odo-unit button").forEach(x=>x.classList.remove("on"));b.classList.add("on");odoUnit=b.dataset.u;};
+});
+
+function toMiles(odo,u){return u==="mi"?odo:odo/KM_PER_MILE;}
+function toGal(fuel,u){return u==="gal"?fuel:fuel*GAL_PER_LITER;}
+
+function calcMPG(){
+const sorted=[...records].sort((a,b)=>toMiles(a.odo,a.odoUnit||"mi")-toMiles(b.odo,b.odoUnit||"mi"));
+const mpgMap={};
+for(let i=1;i<sorted.length;i++){
+const dist=toMiles(sorted[i].odo,sorted[i].odoUnit||"mi")-toMiles(sorted[i-1].odo,sorted[i-1].odoUnit||"mi");
+if(dist>0&&sorted[i].fuel>0){
+mpgMap[sorted[i].id]=dist/toGal(sorted[i].fuel,sorted[i].unit);
+}
+}
+return mpgMap;
+}
+
+function showMessage(msg,ok=false){
+const e=document.getElementById("form-err");
+e.textContent=msg;e.classList.toggle("ok",ok);e.style.display="block";
+clearTimeout(showMessage.t);showMessage.t=setTimeout(()=>{e.style.display="none";},2500);
+}
+function resetForm(){
+editingId=null;
+document.getElementById("f-odo").value="";
+document.getElementById("f-fuel").value="";
+document.getElementById("add-btn").textContent="기록 추가";
+document.getElementById("cancel-edit").style.display="none";
+}
+function saveRecord(){
+const date=document.getElementById("f-date").value;
+const odo=parseFloat(document.getElementById("f-odo").value);
+const fuel=parseFloat(document.getElementById("f-fuel").value);
+if(!date||!Number.isFinite(odo)||!Number.isFinite(fuel)||odo<=0||fuel<=0){showMessage("날짜, 주행거리, 주유량을 모두 입력해줘");return;}
+if(editingId===null){
+const id=`record-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+records=[...records,{id,date,odo,fuel,unit,odoUnit}];
+showMessage("기록을 추가했어",true);
+}else{
+const i=records.findIndex(r=>String(r.id)===String(editingId));
+if(i<0){showMessage("수정할 기록을 찾지 못했어");resetForm();return;}
+records=records.map((r,index)=>index===i?{...r,date,odo,fuel,unit,odoUnit}:r);
+showMessage("기록을 업데이트했어",true);
+}
+render();save();resetForm();
+}
+function setToggle(group,value){
+const buttons=document.querySelectorAll(group+" button");
+buttons.forEach(b=>b.classList.toggle("on",b.dataset.u===value));
+}
+function editRecord(id){
+const r=records.find(x=>String(x.id)===String(id));
+if(!r)return;
+editingId=id;
+document.getElementById("f-date").value=r.date;
+document.getElementById("f-odo").value=r.odo;
+document.getElementById("f-fuel").value=r.fuel;
+unit=r.unit||"gal";odoUnit=r.odoUnit||"mi";
+setToggle("#f-unit",unit);setToggle("#f-odo-unit",odoUnit);
+document.getElementById("add-btn").textContent="기록 업데이트";
+document.getElementById("cancel-edit").style.display="block";
+document.querySelector(".form").scrollIntoView({behavior:"smooth",block:"start"});
+}
+function cancelEdit(){resetForm();}
+
+let pendingDel=null;
+function delRecord(id,btn){
+if(pendingDel!==id){
+pendingDel=id;
+btn.textContent="확인?";
+btn.style.color="#ff6b6b";
+clearTimeout(delRecord.t);
+delRecord.t=setTimeout(()=>{pendingDel=null;render();},2500);
+return;
+}
+pendingDel=null;
+records=records.filter(r=>String(r.id)!==String(id));
+save();render();
+}
+
+function render(){
+const mpgMap=calcMPG();
+// 평균 MPG (연비 계산된 기록들의 평균)
+const mpgs=Object.values(mpgMap);
+const avg=mpgs.length?(mpgs.reduce((a,b)=>a+b,0)/mpgs.length):null;
+document.getElementById("avg-mpg").textContent=avg!=null?avg.toFixed(1):"–";
+document.getElementById("rec-count").textContent=records.length;
+
+const list=document.getElementById("records");
+if(!records.length){list.innerHTML='<div class="empty">아직 기록이 없어</div>';return;}
+const sorted=[...records].sort((a,b)=>toMiles(b.odo,b.odoUnit||"mi")-toMiles(a.odo,a.odoUnit||"mi"));
+list.innerHTML=sorted.map(r=>{
+const mpg=mpgMap[r.id];
+const fuelStr=r.unit==="gal"?`${r.fuel} 갤런`:`${r.fuel} 리터`;
+const odoStr=(r.odoUnit||"mi")==="mi"?`${r.odo.toLocaleString()} 마일`:`${r.odo.toLocaleString()} km`;
+return `<div class="rec" data-id="${String(r.id).replace(/&/g,"&amp;").replace(/"/g,"&quot;")}"><div class="info"><div class="date">${r.date}</div><div class="detail">${odoStr} · ${fuelStr}</div></div><div class="mpg">${mpg!=null?mpg.toFixed(1)+'<small> MPG</small>':'<small>–</small>'}</div><div class="rec-actions"><button type="button" class="edit" aria-label="${r.date} 기록 수정">수정</button><button type="button" class="del" aria-label="${r.date} 기록 삭제">×</button></div></div>`;
+}).join("");
+}
+
+document.getElementById("add-btn").addEventListener("click",saveRecord);
+document.getElementById("cancel-edit").addEventListener("click",cancelEdit);
+document.getElementById("records").addEventListener("click",event=>{
+const button=event.target.closest("button");
+const card=event.target.closest(".rec");
+if(!button||!card)return;
+if(button.classList.contains("edit"))editRecord(card.dataset.id);
+if(button.classList.contains("del"))delRecord(card.dataset.id,button);
+});
+render();
+</script>
+</body>
+</html>
